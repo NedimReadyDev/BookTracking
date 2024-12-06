@@ -1,0 +1,534 @@
+﻿@page "/"
+@page "/tbr"
+@page "/books-read"
+
+@inject IDbContextFactory<DatabaseContext> dbContextFactory
+@inject NavigationManager navigationManager
+@inject IJSRuntime jsRuntime
+
+<PageTitle>@(isTbrList ? "TBR List" : "Books Read")</PageTitle>
+
+<div class="grid">
+    <div class="d-flex justify-content-between align-items-center">
+        <h4>@(isTbrList ? "TBR List" : "Books Read")</h4>
+        <div class="filters d-flex gap-2">
+            <input type="text" placeholder="Search Books" @onchange="SearchFilterChanged" />
+            <select @onchange="AuthorFilterSelected">
+                <option value="">Filter by Author</option>
+                @foreach (var author in authorsFilter)
+                {
+                    <option value="@author.Id">@author.DisplayName</option>
+                }
+            </select>
+            <select @onchange="GenreFilterSelected">
+                <option value="">Filter by Genre</option>
+                @foreach (var genre in genresFilter)
+                {
+                    <option value="@genre.Id">@genre.Name</option>
+                }
+            </select>
+        </div>
+        <button class="btn btn-primary" type="button" @onclick="() => CreateBook()">Add Book</button>
+    </div>
+    <QuickGrid Items="books">
+        <PropertyColumn Property="@(c => c.Title)" Sortable="true" />
+        <PropertyColumn Property="@(c => c.Author.DisplayName)" Title="Author" Sortable="true" />
+        <PropertyColumn Property="@(c => c.DateAdded)" Title="Date Added" Sortable="true" />
+        @if (isTbrList)
+        {
+            <PropertyColumn Property="@(c => c.IsPriority ? "Yes" : "No")" Title="Priority" Sortable="true" />
+        }
+        else
+        {
+            <PropertyColumn Property="@(c => c.DateRead)" Title="Date Read" Sortable="true" />
+            <PropertyColumn Property="@(c => c.Rating)" Title="Rating" Sortable="true" />
+        }
+        <PropertyColumn Property="@(c => c.Genre != null ? c.Genre.Name : "")" Title="Genre" Sortable="true" />
+        @if (isTbrList)
+        {
+            <TemplateColumn Sortable="false">
+                <button type="btn" class="btn btn-primary" @onclick="() => StartReview(context.Id)">Read</button>
+            </TemplateColumn>
+        }
+        else
+        {
+            <TemplateColumn Sortable="false">
+                <button type="btn" class="btn btn-primary" @onclick="async () => await ViewReview(context.Id)">View Review</button>
+            </TemplateColumn>
+        }
+        <TemplateColumn Sortable="false">
+            <button type="btn" class="btn btn-warning" @onclick="async () => await EditBook(context.Id)">Edit</button>
+        </TemplateColumn>
+        <TemplateColumn Sortable="false">
+            <button type="btn" class="btn btn-danger" @onclick="async () => await DeleteBook(context.Id)">Delete</button>
+        </TemplateColumn>
+    </QuickGrid>
+</div>
+
+@if (editedBook != null)
+{
+    <div class="modal fade show" tabindex="-1" style="display:block">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(editedBook.Id > 0 ? "Edit" : "Add") Book</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" @onclick="() => editedBook = null"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="title">Title</label>
+                        <input type="text" id="title" class="form-control" @bind-value="editedBook.Title" />
+                    </div>
+                    @if (isTbrList)
+                    {
+                        <div class="form-group">
+                            <input type="checkbox" id="priority" @bind-value="editedBook.IsPriority" />
+                            <label for="priority">Priority</label>
+                        </div>
+                    }
+                    <div class="form-group">
+                        <label for="author">Author</label>
+                        <InputSelect id="author" @bind-Value="editedBook.AuthorId" class="form-control">
+                            <option value="">Select Author</option>
+                            @foreach (var author in authors)
+                            {
+                                <option value="@author.Id">@author.DisplayName</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    @if (!editedBook.AuthorId.HasValue)
+                    {
+                        <div class="form-group">
+                            <label for="title">Author</label>
+                            <input type="text" id="title" class="form-control" @bind-value="editedBook.Author" />
+                        </div>
+                    }
+                    <div class="form-group">
+                        <label for="author">Genres</label>
+                        <InputSelect id="author" @bind-Value="editedBook.GenreId" class="form-control">
+                            <option value="">Select Genre</option>
+                            @foreach (var genre in genres)
+                            {
+                                <option value="@genre.Id">@genre.Name</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    @if (!isTbrList)
+                    {
+                        <div class="form-group">
+                            <label for="title">Date Read</label>
+                            <InputDate @bind-Value="editedBook.DateRead" />
+                        </div>
+                        <div class="form-group">
+                            <label for="author">Rating</label>
+                            <InputSelect id="author" @bind-Value="editedBook.Rating" class="form-control" >
+                                <option value="">Rate book</option>
+                                <option value="1">1</option>
+                                <option value="2">2</option>
+                                <option value="3">3</option>
+                                <option value="4">4</option>
+                                <option value="5">5</option>
+                            </InputSelect>
+                        </div>
+                        <div class="form-group">
+                            <label for="title">Review</label>
+                            <textarea class="form-control" rows="5" @bind="editedBook.Review" ></textarea>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" @onclick="() => editedBook = null">Close</button>
+                    <button type="button" disabled="@(string.IsNullOrEmpty(editedBook.Title))" class="btn btn-primary" @onclick="async () => await SaveBook()">Save changes</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show"></div>
+}
+
+@if (reviewBook != null)
+{
+    <div class="modal fade show" tabindex="-1" style="display:block">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(isTbrList ? "Add Review" : "View Review")</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" @onclick="() => reviewBook = null"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="title">Date Read</label>
+                        <InputDate @bind-Value="reviewBook.DateRead" disabled="@(!isTbrList)" />
+                    </div>
+                    <div class="form-group">
+                        <label for="author">Rating</label>
+                        <InputSelect id="author" @bind-Value="reviewBook.Rating" class="form-control" disabled="@(!isTbrList)">
+                            <option value="">Rate book</option>
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                        </InputSelect>
+                    </div>
+                    <div class="form-group">
+                        <label for="title">Review</label>
+                        <textarea class="form-control" rows="10" @bind="reviewBook.Review" disabled="@(!isTbrList)"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" @onclick="() => reviewBook = null">Close</button>
+                    @if (isTbrList)
+                    {
+                        <button disabled="@(reviewBook.Rating == 0 || string.IsNullOrEmpty(reviewBook.Review))" type="button" class="btn btn-primary" @onclick="async () => await ReviewBook()">Save changes</button>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show"></div>
+}
+
+@code{
+    private IQueryable<Book>? books;
+
+    private List<Author> authors = [];
+
+    private List<Genre> genres = [];
+
+    private List<Author> authorsFilter = [];
+
+    private List<Genre> genresFilter = [];
+
+    private BookEntry? editedBook = null;
+
+    private ReviewEntry? reviewBook = null;
+
+    private LocalStorageService? localStorageService;
+
+    private bool isTbrList = true;
+
+    private bool listChange = true;
+
+    private int userId;
+
+    private int? selectedAuthorId = null;
+
+    private int? selectedGenre = null;
+
+    private string searchBookValue { get; set; } = "";
+
+    protected override void OnInitialized()
+    {
+        base.OnInitialized();
+        navigationManager.LocationChanged += (o, args) =>
+        {
+            // Check navigation bar url and set list to have TBR commands or not
+            var uri = navigationManager.Uri;
+            if (uri == navigationManager.BaseUri)
+            {
+                navigationManager.NavigateTo($"tbr");
+            }
+            else if (uri.EndsWith("books-read") && isTbrList)
+            {
+                listChange = true;
+                isTbrList = false;
+            }
+            else if (!isTbrList)
+            {
+                listChange = true;
+                isTbrList = true;
+            }
+
+            StateHasChanged();
+        };
+        var uri = navigationManager.Uri;
+        if (uri == navigationManager.BaseUri)
+        {
+            // Navigate to TBR list initially
+            navigationManager.NavigateTo($"tbr");
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Set elements after every render of the page
+        await base.OnAfterRenderAsync(firstRender);
+        if (firstRender)
+        {
+            // Set local storage on frist render and get user data
+            localStorageService = new LocalStorageService(jsRuntime);
+            var userIdString = await localStorageService.GetItem("userId");
+            userId = int.Parse(userIdString);
+        }
+        if (listChange)
+        {
+            // Load data if the list has changed
+            listChange = false;
+            await LoadData();
+        }
+    }
+
+    private async Task LoadData()
+    {
+        using var context = dbContextFactory.CreateDbContext();
+
+        // Load books list
+        var booksList = await context.Books
+            .Include(x => x.Author)
+            .Include(x => x.Genre)
+            .Where(x => x.UserId == userId)
+            .ToListAsync();
+        books = booksList.AsQueryable();
+
+        // Get all book authors
+        authors = await context.Authors
+            .Where(x => x.UserId == userId)
+            .ToListAsync();
+
+        // Get available genres
+        genres = await context.Genres.ToListAsync();
+
+        authorsFilter = authors.Where(x => books.Select(b => b.AuthorId).Distinct().Contains(x.Id)).ToList();
+        genresFilter = genres.Where(x => books.Select(b => b.GenreId).Distinct().Contains(x.Id)).ToList();
+
+        // Run books filter
+        FilterBooks();
+        StateHasChanged();
+    }
+
+    private async Task AuthorFilterSelected(ChangeEventArgs args)
+    {
+        // Act on author filtering
+        if (!int.TryParse(args.Value?.ToString(), out var authorId))
+        {
+            selectedAuthorId = null;
+        }
+        else
+        {
+            selectedAuthorId = authorId;
+        }
+
+        await LoadData();
+    }
+
+    private async Task GenreFilterSelected(ChangeEventArgs args)
+    {
+        // Act on genre filtering
+        if (!int.TryParse(args.Value?.ToString(), out var genreId))
+        {
+            selectedGenre = null;
+        }
+        else
+        {
+            selectedGenre = genreId;
+        }
+
+        await LoadData();
+    }
+
+    private async Task SearchFilterChanged(ChangeEventArgs args)
+    {
+        // Act on search filter
+        searchBookValue = args.Value?.ToString() ?? string.Empty;
+        await LoadData();
+    }
+
+
+    private void FilterBooks()
+    {
+        if (books == null)
+        {
+            // Not books loaded, so nothing to do
+            return;
+        }
+
+        // Set books list based on TBR selection
+        if (isTbrList)
+        {
+            books = books.Where(x => x.DateRead == null);
+        }
+        else
+        {
+            books = books.Where(x => x.DateRead != null);
+        }
+
+        if (selectedAuthorId.HasValue)
+        {
+            // Filter based on author
+            books = books.Where(x => x.AuthorId == selectedAuthorId.Value);
+        }
+
+        if (selectedGenre.HasValue)
+        {
+            // Filter based on genre
+            books = books.Where(x => x.GenreId == selectedGenre.Value);
+        }
+
+        if (!string.IsNullOrEmpty(searchBookValue))
+        {
+            // Filter based on search criteria
+            books = books.Where(x => x.Title.Contains(searchBookValue, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private void CreateBook()
+    {
+        editedBook = new BookEntry();
+    }
+
+    private async Task EditBook(int bookId)
+    {
+        using var dbContext = dbContextFactory.CreateDbContext();
+        var book = await dbContext.Books.SingleOrDefaultAsync(x => x.Id == bookId);
+        if (book == null)
+        {
+            return;
+        }
+
+        editedBook = new BookEntry
+            {
+                Id = book.Id,
+                AuthorId = book.AuthorId,
+                GenreId = book.GenreId,
+                Rating = book.Rating,
+                IsPriority = book.IsPriority,
+                Review = book.Review,
+                Title = book.Title,
+                DateRead = book.DateRead
+            };
+    }
+
+    private void StartReview(int bookId)
+    {
+        reviewBook = new ReviewEntry
+            {
+                Id = bookId
+            };
+    }
+
+    private async Task ViewReview(int bookId)
+    {
+        using var dbContext = dbContextFactory.CreateDbContext();
+        var book = await dbContext.Books.SingleOrDefaultAsync(x => x.Id == bookId);
+        if (book == null)
+        {
+            return;
+        }
+
+        reviewBook = new ReviewEntry()
+            {
+                Review = book.Review,
+                Rating = book.Rating,
+                DateRead = book.DateRead ?? DateTime.Now
+            };
+    }
+
+    private async Task DeleteBook(int bookId)
+    {
+        // Deleting book from database
+        using var dbContext = dbContextFactory.CreateDbContext();
+        var book = await dbContext.Books.SingleOrDefaultAsync(x => x.Id == bookId);
+        if (book == null)
+        {
+            return;
+        }
+
+        dbContext.Books.Remove(book);
+        await dbContext.SaveChangesAsync();
+
+        await LoadData();
+    }
+
+    private async Task SaveBook()
+    {
+        if (editedBook == null)
+        {
+            return;
+        }
+
+        Book? book = null;
+
+        using var dbContext = dbContextFactory.CreateDbContext();
+
+        if (editedBook.Id > 0)
+        {
+            // Editing existing book
+            book = await dbContext.Books.SingleOrDefaultAsync(x => x.Id == editedBook.Id);
+        }
+        else
+        {
+            // Creating a new book
+            book = new Book
+                {
+                    UserId = userId
+                };
+        }
+
+        // Setting book properties
+        book.Title = editedBook.Title;
+
+        if (editedBook.AuthorId.HasValue)
+        {
+            book.AuthorId = editedBook.AuthorId.Value;
+        }
+        else
+        {
+            // Creating new author in case one was not selected
+            var nameSplit = editedBook.Author.Split(" ");
+            var author = new Author
+            {
+                FirstName = nameSplit[0],
+                LastName = nameSplit[1],
+                UserId = userId,
+                Biography = ""
+            };
+            dbContext.Authors.Add(author);
+            await dbContext.SaveChangesAsync();
+            book.AuthorId = author.Id;
+        }
+
+        book.GenreId = editedBook.GenreId;
+
+        book.Review = editedBook.Review;
+
+        book.Rating = editedBook.Rating;
+
+        book.DateRead = editedBook.DateRead;
+
+        book.IsPriority = editedBook.IsPriority;
+
+        if (book.Id == 0)
+        {
+            book.DateAdded = DateTime.Now;
+            dbContext.Books.Add(book);
+        }
+
+        await dbContext.SaveChangesAsync();
+        editedBook = null;
+
+        await LoadData();
+    }
+
+    private async Task ReviewBook()
+    {
+        if (reviewBook == null)
+        {
+            return;
+        }
+
+        using var dbContext = dbContextFactory.CreateDbContext();
+
+        var book = await dbContext.Books.SingleAsync(x => x.Id == reviewBook.Id);
+
+        book.Rating = reviewBook.Rating;
+        book.Review = reviewBook.Review;
+        book.DateRead = reviewBook.DateRead;
+
+        await dbContext.SaveChangesAsync();
+
+        await LoadData();
+
+        reviewBook = null;
+    }
+}

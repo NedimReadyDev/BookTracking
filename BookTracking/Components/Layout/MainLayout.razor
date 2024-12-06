@@ -1,0 +1,186 @@
+﻿@inherits LayoutComponentBase
+
+@inject IDbContextFactory<DatabaseContext> dbContextFactory
+@inject IJSRuntime jsRuntime
+
+<div class="page">
+    <div class="sidebar">
+        <NavMenu />
+    </div>
+
+    <main>
+        <div class="top-row px-4">
+            @if (user != null)
+            {
+                <div class="d-flex gap-2 align-items-center">
+                    <label>Hi, @user.Username</label>
+                    <a @onclick="async () => await Signout()">Sign Out</a>
+                </div>
+                
+            }
+        </div>
+
+        <article class="content px-4">
+            @if (user != null)
+            {
+                @Body
+            }
+        </article>
+    </main>
+</div>
+
+@if (user == null && isLoaded)
+{
+    <div class="modal fade show" tabindex="-1" style="display:block">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(isRegistering ? "Sign up" : "Login")</h5>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="username">Username</label>
+                        <input type="text" id="username" class="form-control" @bind-value="username" bind-value:event="oninput" />
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" class="form-control" @bind-value="password" bind-value:event="oninput" />
+                    </div>
+                    @if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="p-2 text-danger">
+                            @errorMessage
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer d-flex justify-content-between">
+                    <div class="d-flex gap-2 align-items-center">
+                        <label>@(isRegistering ? "Already have account?" : "No account?")</label>
+                        <a @onclick="() => isRegistering = !isRegistering">@(isRegistering ? "Sign in" : "Sign up")</a>
+                    </div>
+                    <button disabled="@(string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))" type="button" class="btn btn-primary" @onclick="async () => await CheckUser()">@(isRegistering ? "Register" : "Login")</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show"></div>
+}
+
+<div id="blazor-error-ui">
+    An unhandled error has occurred.
+    <a href="" class="reload">Reload</a>
+    <a class="dismiss">🗙</a>
+</div>
+
+@code{
+    private User? user;
+    private bool isRegistering = false;
+    private string username { get; set; }
+    private string password { get; set; }
+    private string errorMessage = "";
+    private LocalStorageService? localStorageService;
+    private bool isLoaded = false;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await base.OnAfterRenderAsync(firstRender);
+        if (firstRender)
+        {
+            // On first render, get user ufrom local storage if existing
+            localStorageService = new LocalStorageService(jsRuntime);
+            var userId = await localStorageService.GetItem("userId");
+            if (!string.IsNullOrEmpty(userId) && int.TryParse(userId, out var userIdParsed))
+            {
+                using var context = dbContextFactory.CreateDbContext();
+                var loggedInUser = await context.Users.SingleOrDefaultAsync(x => x.Id == userIdParsed);
+                if (loggedInUser != null)
+                {
+                    user = loggedInUser;
+                }
+                else
+                {
+                    await localStorageService.RemoveItem("userId");
+                }
+            }
+            isLoaded = true;
+            StateHasChanged();
+        }
+    }
+
+    private async Task CheckUser()
+    {
+        // Verify user for login or registration
+        if (isRegistering)
+        {
+            await Register();
+        }
+        else
+        {
+            await Login();
+        }
+    }
+
+    private async Task Login()
+    {
+        // Try to login the user
+        using var context = dbContextFactory.CreateDbContext();
+        // Finding user in database based on username entered
+        var userCheck = await context.Users.SingleOrDefaultAsync(x => x.Username.ToLower() == username.ToLower());
+        if (userCheck == null)
+        {
+            // User not found, returning error message
+            errorMessage = "No user found";
+            return;
+        }
+
+        if (userCheck.Password != password)
+        {
+            // User password do not match, returning error message
+            errorMessage = "Wrong password";
+            return;
+        }
+
+        // Verified user
+        user = userCheck;
+        await localStorageService!.AddItem("userId", user.Id.ToString());
+        StateHasChanged();
+    }
+
+    private async Task Register()
+    {
+        // Registering a new user
+        using var context = dbContextFactory.CreateDbContext();
+
+        // Trying to find existing user based on username entered
+        var userCheck = context.Users.SingleOrDefault(x => x.Username.ToLower() == username.ToLower());
+        if (userCheck != null)
+        {
+            // User with same username found. We can't register same username twice. Returning error message
+            errorMessage = "User already exists";
+            return;
+        }
+
+        // Creating new user with specified username and password
+        userCheck = new User
+            {
+                Username = username,
+                Password = password
+            };
+
+        context.Users.Add(userCheck);
+        await context.SaveChangesAsync();
+        user = userCheck;
+        await localStorageService!.AddItem("userId", user.Id.ToString());
+        StateHasChanged();
+    }
+
+    private async Task Signout()
+    {
+        // Signing out user
+        user = null;
+        username = string.Empty;
+        password = string.Empty;
+        await localStorageService!.RemoveItem("userId");
+        StateHasChanged();
+    }
+}
