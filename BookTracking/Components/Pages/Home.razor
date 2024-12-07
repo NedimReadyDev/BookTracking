@@ -260,6 +260,7 @@
             localStorageService = new LocalStorageService(jsRuntime);
             var userIdString = await localStorageService.GetItem("userId");
             userId = int.Parse(userIdString);
+            await LoadData();
         }
         if (listChange)
         {
